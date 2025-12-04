@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- ─────────── Metadatos básicos ─────────── -->
+    <groupId>com.watones</groupId>
+    <artifactId>watoneshubactionbar</artifactId>
+    <version>1.0.0</version>
+    <name>WatonesHubActionBar</name>
+    <description>ActionBar permanente con la IP en el lobby</description>
+
+    <!-- ─────────── Propiedades globales ─────────── -->
+    <properties>
+        <!-- Compilador -->
+        <maven.compiler.release>21</maven.compiler.release>
+        <!-- Versión de la API de Paper (ajusta si sale una más nueva) -->
+        <paper.api.version>1.21.6-R0.1-SNAPSHOT</paper.api.version>
+    </properties>
+
+    <!-- ─────────── Repositorios ─────────── -->
+    <repositories>
+        <repository>
+            <id>papermc</id>
+            <url>https://repo.papermc.io/repository/maven-public/</url>
+        </repository>
+    </repositories>
+
+    <!-- ─────────── Dependencias ─────────── -->
+    <dependencies>
+        <!-- Paper API (scope provided para no sombrear el JAR) -->
+        <dependency>
+            <groupId>io.papermc.paper</groupId>
+            <artifactId>paper-api</artifactId>
+            <version>${paper.api.version}</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <!-- ─────────── Plugins de construcción ─────────── -->
+    <build>
+        <plugins>
+            <!-- Compilador -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <release>${maven.compiler.release}</release>
+                </configuration>
+            </plugin>
+
+            <!-- Empaquetado del JAR -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.3.0</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
