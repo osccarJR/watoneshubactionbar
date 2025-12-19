@@ -15,21 +15,24 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * WatonesHubActionBar v2.0
+ * WatonesHubActionBar v2.1
  *
- * - ActionBar permanente con rotación de mensajes.
+ * - ActionBar permanente con rotación de mensajes (toggleable).
  * - BossBar con rotación de mensajes y animación de progreso.
  * - Comando /whab reload para recargar config.
- * - Todo en una sola tarea muy ligera.
+ * - Task única y ligera.
  */
 public final class WatonesHubActionBar extends JavaPlugin {
 
     // ─────────── ActionBar ───────────
+    private boolean actionBarEnabled;
     private List<Component> actionBarMessages;
     private int actionBarIndex = 0;
     private long actionBarInterval;          // cada cuántos ticks se envía
@@ -45,6 +48,9 @@ public final class WatonesHubActionBar extends JavaPlugin {
     private double bossBarProgressDirection; // 1 sube, -1 baja
     private BossBar bossBar;
 
+    // Optimización: membership O(1) para no usar bossBar.getPlayers().contains() cada tick
+    private final Set<UUID> bossbarViewers = new HashSet<>();
+
     // ─────────── Mundos y tick global ───────────
     private Set<String> targetWorlds;
     private long tickCounter = 0L;
@@ -56,7 +62,8 @@ public final class WatonesHubActionBar extends JavaPlugin {
         saveDefaultConfig();
         reloadSettings();
         startTask();
-        getLogger().info("WatonesHubActionBar habilitado. Interval ActionBar: " + actionBarInterval + " ticks.");
+        getLogger().info("WatonesHubActionBar habilitado. ActionBar: " + actionBarEnabled
+                + " | Interval ActionBar: " + actionBarInterval + " ticks.");
     }
 
     @Override
@@ -64,15 +71,14 @@ public final class WatonesHubActionBar extends JavaPlugin {
         if (bossBar != null) {
             bossBar.removeAll();
         }
+        bossbarViewers.clear();
     }
 
     // ───────────────── Comando /whab ─────────────────
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (!command.getName().equalsIgnoreCase("whab")) {
-            return false;
-        }
+        if (!command.getName().equalsIgnoreCase("whab")) return false;
 
         if (args.length == 0 || !args[0].equalsIgnoreCase("reload")) {
             sender.sendMessage("§eUso: §f/whab reload");
@@ -99,9 +105,11 @@ public final class WatonesHubActionBar extends JavaPlugin {
         actionBarIndex = 0;
         bossBarIndex = 0;
         tickCounter = 0L;
-        bossBarProgressDirection = 1.0;
+        bossBarProgressDirection = 1.0D;
 
         // ---------- ActionBar ----------
+        actionBarEnabled = cfg.getBoolean("actionbar.enabled", true);
+
         List<String> abList = cfg.getStringList("actionbar.messages");
         if (abList == null || abList.isEmpty()) {
             String single = cfg.getString("actionbar.message", "&7ᴍᴄ.ᴡᴀᴛᴏɴᴇꜱ.ɴᴇᴛ");
@@ -177,6 +185,9 @@ public final class WatonesHubActionBar extends JavaPlugin {
                 bossBar.removeAll();
             }
 
+            // IMPORTANT: resetea viewers para que se vuelva a añadir correctamente por mundo
+            bossbarViewers.clear();
+
             // progreso y animación
             bossBarProgressEnabled = cfg.getBoolean("bossbar.progress.enabled", true);
             bossBarProgressStep = cfg.getDouble("bossbar.progress.step", 0.01D);
@@ -191,12 +202,14 @@ public final class WatonesHubActionBar extends JavaPlugin {
             boolean pingPong = cfg.getBoolean("bossbar.progress.pingpong", true);
             bossBarProgressDirection = pingPong ? -1.0D : -1.0D; // empezamos bajando desde 1.0
             bossBar.setProgress(bossBarProgress);
+
         } else {
             if (bossBar != null) {
                 bossBar.removeAll();
                 bossBar = null;
             }
             bossBarProgressEnabled = false;
+            bossbarViewers.clear();
         }
     }
 
@@ -220,7 +233,7 @@ public final class WatonesHubActionBar extends JavaPlugin {
             tickCounter++;
 
             // ¿Toca enviar ActionBar este tick?
-            boolean sendActionBarNow = (tickCounter % actionBarInterval == 0);
+            boolean sendActionBarNow = actionBarEnabled && (tickCounter % actionBarInterval == 0);
 
             // Mensaje actual del ActionBar (si toca enviar)
             Component currentActionBar = null;
@@ -262,19 +275,23 @@ public final class WatonesHubActionBar extends JavaPlugin {
                     player.sendActionBar(currentActionBar);
                 }
 
-                // BossBar: añadir / remover según mundo
+                // BossBar: añadir / remover según mundo (O(1) con set)
                 if (bossBarEnabled && bossBar != null) {
+                    UUID id = player.getUniqueId();
+
                     if (inTarget) {
-                        if (!bossBar.getPlayers().contains(player)) {
+                        if (bossbarViewers.add(id)) {
                             bossBar.addPlayer(player);
                         }
                     } else {
-                        bossBar.removePlayer(player);
+                        if (bossbarViewers.remove(id)) {
+                            bossBar.removePlayer(player);
+                        }
                     }
                 }
             }
 
-        }, 0L, 1L); // periodo 1 tick (muy ligero)
+        }, 0L, 1L); // periodo 1 tick
     }
 
     private boolean shouldShow(World world) {

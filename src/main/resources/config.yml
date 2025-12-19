@@ -1,44 +1,30 @@
 # ───────────────────── ActionBar ─────────────────────
 actionbar:
-  # Lista de mensajes para rotar (MiniMessage o &-colors).
+  enabled: true  # true/false para activar o desactivar ActionBar
+
   messages:
     - "&7ᴍᴄ.ᴡᴀᴛᴏɴᴇꜱ.ɴᴇᴛ"
     # - "&dTienda: &ftienda.watones.net"
     # - "&dDiscord: &fdiscord.gg/watones"
 
-  # Cada cuántos ticks se envía el ActionBar.
-  # 20 ticks = 1 segundo.
   interval: 40
 
 # ───────────────────── BossBar ───────────────────────
 bossbar:
   enabled: true
 
-  # Mensajes rotativos de la BossBar.
   messages:
     - "&f25% de &dDESCUENTO &fen tienda.watones.net"
     - "&fIP: &dmc.watones.net"
-    # - "&fNueva modalidad &dSURVIVAL 1.21"
 
-  # Color y estilo de la barra.
-  color: PINK          # PINK, PURPLE, BLUE, GREEN, YELLOW, RED, WHITE
-  style: SOLID         # SOLID, SEGMENTED_6, SEGMENTED_10, SEGMENTED_12, SEGMENTED_20
-
-  # Cada cuántos ticks cambia de mensaje la BossBar.
-  # 200 ticks = 10 segundos.
+  color: PINK
+  style: SOLID
   rotation-interval: 200
 
-  # Animación del progreso de la barra.
   progress:
     enabled: true
-
-    # Valor inicial de progreso (0.0 - 1.0).
     initial: 1.0
-
-    # Cuánto se mueve por tick (0.01 = ~5s para bajar de 1 a 0).
     step: 0.01
-
-    # Si es true, hace efecto ping-pong (1 -> 0 -> 1 -> 0 ...)
     pingpong: true
 
 # ───────────────────── Mundos objetivo ───────────────
