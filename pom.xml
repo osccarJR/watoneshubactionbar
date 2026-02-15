@@ -7,7 +7,7 @@
     <!-- ─────────── Metadatos básicos ─────────── -->
     <groupId>com.watones</groupId>
     <artifactId>watoneshubactionbar</artifactId>
-    <version>1.0.0</version>
+    <version>2.1.0</version>
     <name>WatonesHubActionBar</name>
     <description>ActionBar permanente con la IP en el lobby</description>
 

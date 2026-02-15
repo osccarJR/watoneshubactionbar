@@ -1,32 +1,27 @@
-# ───────────────────── ActionBar ─────────────────────
-actionbar:
-  enabled: true  # true/false para activar o desactivar ActionBar
+plugin:
+  enabled: false
 
+actionbar:
+  enabled: true
   messages:
-    - "&7ᴍᴄ.ᴡᴀᴛᴏɴᴇꜱ.ɴᴇᴛ"
+    - "&7mc.watones.net"
     # - "&dTienda: &ftienda.watones.net"
     # - "&dDiscord: &fdiscord.gg/watones"
-
   interval: 40
 
-# ───────────────────── BossBar ───────────────────────
 bossbar:
   enabled: true
-
   messages:
     - "&f25% de &dDESCUENTO &fen tienda.watones.net"
     - "&fIP: &dmc.watones.net"
-
   color: PINK
   style: SOLID
   rotation-interval: 200
-
   progress:
-    enabled: true
+    enabled: false
     initial: 1.0
     step: 0.01
-    pingpong: true
+    pingpong: true # true=baja/sube, false=baja y vuelve a initial
 
-# ───────────────────── Mundos objetivo ───────────────
 worlds:
   - Lobby

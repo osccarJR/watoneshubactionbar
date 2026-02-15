@@ -1,18 +1,18 @@
 name: WatonesHubActionBar
-version: 2.0.0
+version: 2.1.0
 main: com.watones.watoneshubactionbar.WatonesHubActionBar
-api-version: "1.20"
+api-version: "1.21"
 author: Emilio
-description: ActionBar + BossBar permanentes con rotación y animación.
+description: ActionBar + BossBar permanentes con rotacion y animacion.
 load: POSTWORLD
 
 commands:
   whab:
     description: Comandos de WatonesHubActionBar.
-    usage: "/whab reload"
+    usage: "/whab <reload|on|off|status>"
     permission: watoneshubactionbar.reload
 
 permissions:
   watoneshubactionbar.reload:
-    description: Permite recargar la configuración del plugin.
+    description: Permite recargar y encender/apagar el plugin.
     default: op

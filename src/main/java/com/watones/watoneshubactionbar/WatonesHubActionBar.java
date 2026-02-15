@@ -4,6 +4,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.World;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
@@ -12,169 +13,193 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitTask;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * WatonesHubActionBar v2.1
+ * WatonesHubActionBar v2.1.0
  *
- * - ActionBar permanente con rotación de mensajes (toggleable).
- * - BossBar con rotación de mensajes y animación de progreso.
- * - Comando /whab reload para recargar config.
- * - Task única y ligera.
+ * - ActionBar con rotacion de mensajes.
+ * - BossBar con rotacion y animacion de progreso.
+ * - Comandos: /whab reload|on|off|status
+ * - Una sola task global y cancelable.
  */
-public final class WatonesHubActionBar extends JavaPlugin {
+public final class WatonesHubActionBar extends JavaPlugin implements Listener {
 
-    // ─────────── ActionBar ───────────
+    private boolean pluginEnabled;
+
     private boolean actionBarEnabled;
     private List<Component> actionBarMessages;
     private int actionBarIndex = 0;
-    private long actionBarInterval;          // cada cuántos ticks se envía
+    private long actionBarInterval;
 
-    // ─────────── BossBar ───────────
     private boolean bossBarEnabled;
     private List<Component> bossBarMessages;
     private int bossBarIndex = 0;
-    private long bossBarRotationInterval;    // cada cuántos ticks cambia el mensaje
+    private long bossBarRotationInterval;
     private boolean bossBarProgressEnabled;
-    private double bossBarProgress;          // 0.0 - 1.0
-    private double bossBarProgressStep;      // cuanto avanza por tick
-    private double bossBarProgressDirection; // 1 sube, -1 baja
+    private double bossBarProgress;
+    private double bossBarProgressStep;
+    private double bossBarProgressDirection;
+    private boolean bossBarProgressPingPong;
+    private double bossBarProgressInitial;
     private BossBar bossBar;
 
-    // Optimización: membership O(1) para no usar bossBar.getPlayers().contains() cada tick
     private final Set<UUID> bossbarViewers = new HashSet<>();
 
-    // ─────────── Mundos y tick global ───────────
     private Set<String> targetWorlds;
     private long tickCounter = 0L;
-
-    // ───────────────── Ciclo de vida ─────────────────
+    private BukkitTask tickerTask;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        Bukkit.getPluginManager().registerEvents(this, this);
+
         reloadSettings();
-        startTask();
-        getLogger().info("WatonesHubActionBar habilitado. ActionBar: " + actionBarEnabled
-                + " | Interval ActionBar: " + actionBarInterval + " ticks.");
+        applyRuntimeState();
+
+        getLogger().info("WatonesHubActionBar enabled. State=" + (pluginEnabled ? "ON" : "OFF")
+                + " ActionBar=" + actionBarEnabled + " interval=" + actionBarInterval + "t");
     }
 
     @Override
     public void onDisable() {
+        stopTask();
         if (bossBar != null) {
             bossBar.removeAll();
+            bossBar = null;
         }
         bossbarViewers.clear();
     }
 
-    // ───────────────── Comando /whab ─────────────────
-
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (!command.getName().equalsIgnoreCase("whab")) return false;
-
-        if (args.length == 0 || !args[0].equalsIgnoreCase("reload")) {
-            sender.sendMessage("§eUso: §f/whab reload");
-            return true;
+        if (!command.getName().equalsIgnoreCase("whab")) {
+            return false;
         }
 
         if (!sender.hasPermission("watoneshubactionbar.reload")) {
-            sender.sendMessage("§cNo tienes permiso para usar este comando.");
+            sender.sendMessage(ChatColor.RED + "No tienes permiso para usar este comando.");
             return true;
         }
 
-        reloadConfig();
-        reloadSettings();
-        sender.sendMessage("§aWatonesHubActionBar recargado correctamente.");
-        return true;
+        if (args.length == 0) {
+            sender.sendMessage(ChatColor.YELLOW + "Uso: " + ChatColor.WHITE + "/whab <reload|on|off|status>");
+            return true;
+        }
+
+        String sub = args[0].toLowerCase(Locale.ROOT);
+        switch (sub) {
+            case "reload":
+                reloadConfig();
+                reloadSettings();
+                applyRuntimeState();
+                sender.sendMessage(ChatColor.GREEN + "WatonesHubActionBar recargado. Estado: "
+                        + (pluginEnabled ? ChatColor.GREEN + "ON" : ChatColor.RED + "OFF"));
+                return true;
+
+            case "on":
+                if (pluginEnabled) {
+                    sender.sendMessage(ChatColor.YELLOW + "WatonesHubActionBar ya esta encendido.");
+                    return true;
+                }
+                setEnabledInConfig(true);
+                sender.sendMessage(ChatColor.GREEN + "WatonesHubActionBar encendido.");
+                return true;
+
+            case "off":
+                if (!pluginEnabled) {
+                    sender.sendMessage(ChatColor.YELLOW + "WatonesHubActionBar ya esta apagado.");
+                    return true;
+                }
+                setEnabledInConfig(false);
+                sender.sendMessage(ChatColor.RED + "WatonesHubActionBar apagado.");
+                return true;
+
+            case "status":
+                sender.sendMessage(ChatColor.GRAY + "Estado: " + (pluginEnabled ? ChatColor.GREEN + "ON" : ChatColor.RED + "OFF")
+                        + ChatColor.GRAY + " | ActionBar: " + (actionBarEnabled ? ChatColor.GREEN + "ON" : ChatColor.RED + "OFF")
+                        + ChatColor.GRAY + " | BossBar: " + (bossBarEnabled ? ChatColor.GREEN + "ON" : ChatColor.RED + "OFF"));
+                return true;
+
+            default:
+                sender.sendMessage(ChatColor.YELLOW + "Uso: " + ChatColor.WHITE + "/whab <reload|on|off|status>");
+                return true;
+        }
     }
 
-    // ───────────────── Configuración ─────────────────
+    private void setEnabledInConfig(boolean enabled) {
+        getConfig().set("plugin.enabled", enabled);
+        saveConfig();
+        reloadConfig();
+        reloadSettings();
+        applyRuntimeState();
+    }
 
     private void reloadSettings() {
         FileConfiguration cfg = getConfig();
 
-        // Reset de índices y ticks
+        pluginEnabled = cfg.getBoolean("plugin.enabled", true);
+
         actionBarIndex = 0;
         bossBarIndex = 0;
         tickCounter = 0L;
         bossBarProgressDirection = 1.0D;
 
-        // ---------- ActionBar ----------
         actionBarEnabled = cfg.getBoolean("actionbar.enabled", true);
 
         List<String> abList = cfg.getStringList("actionbar.messages");
-        if (abList == null || abList.isEmpty()) {
-            String single = cfg.getString("actionbar.message", "&7ᴍᴄ.ᴡᴀᴛᴏɴᴇꜱ.ɴᴇᴛ");
+        if (abList.isEmpty()) {
+            String single = cfg.getString("actionbar.message", "&7mc.watones.net");
             actionBarMessages = Collections.singletonList(parseText(single));
         } else {
-            actionBarMessages = abList.stream()
-                    .map(this::parseText)
-                    .collect(Collectors.toList());
+            actionBarMessages = abList.stream().map(this::parseText).collect(Collectors.toList());
         }
 
         actionBarInterval = cfg.getLong("actionbar.interval", 40L);
-        if (actionBarInterval <= 0) {
-            actionBarInterval = 20L; // mínimo 1s para evitar spam absurdo
+        if (actionBarInterval <= 0L) {
+            actionBarInterval = 20L;
         }
 
-        // ---------- Mundos ----------
         targetWorlds = cfg.getStringList("worlds").stream()
-                .map(String::toLowerCase)
+                .map(s -> s.toLowerCase(Locale.ROOT))
                 .collect(Collectors.toSet());
 
-        // ---------- BossBar ----------
-        bossBarEnabled = cfg.getBoolean("bossbar.enabled", false);
+        bossBarEnabled = pluginEnabled && cfg.getBoolean("bossbar.enabled", false);
 
         if (bossBarEnabled) {
-            // mensajes
             List<String> bbList = cfg.getStringList("bossbar.messages");
-            if (bbList == null || bbList.isEmpty()) {
-                String single = cfg.getString("bossbar.message",
-                        "&f25% de &dDESCUENTO &fen tienda.watones.net");
+            if (bbList.isEmpty()) {
+                String single = cfg.getString("bossbar.message", "&f25% de &dDESCUENTO &fen tienda.watones.net");
                 bossBarMessages = Collections.singletonList(parseText(single));
             } else {
-                bossBarMessages = bbList.stream()
-                        .map(this::parseText)
-                        .collect(Collectors.toList());
+                bossBarMessages = bbList.stream().map(this::parseText).collect(Collectors.toList());
             }
 
-            bossBarRotationInterval = cfg.getLong("bossbar.rotation-interval", 200L); // 10s
+            bossBarRotationInterval = cfg.getLong("bossbar.rotation-interval", 200L);
             if (bossBarRotationInterval < 20L) {
-                bossBarRotationInterval = 20L; // mínimo 1s entre cambios
+                bossBarRotationInterval = 20L;
             }
 
-            // color y estilo
-            String colorName = cfg.getString("bossbar.color", "PINK").toUpperCase();
-            String styleName = cfg.getString("bossbar.style", "SOLID").toUpperCase();
+            BarColor color = parseBarColor(cfg.getString("bossbar.color", "PINK"));
+            BarStyle style = parseBarStyle(cfg.getString("bossbar.style", "SOLID"));
 
-            BarColor color;
-            BarStyle style;
-
-            try {
-                color = BarColor.valueOf(colorName);
-            } catch (IllegalArgumentException ex) {
-                color = BarColor.PURPLE;
-                getLogger().warning("Color de bossbar inválido en config.yml, usando PURPLE.");
-            }
-
-            try {
-                style = BarStyle.valueOf(styleName);
-            } catch (IllegalArgumentException ex) {
-                style = BarStyle.SOLID;
-                getLogger().warning("Estilo de bossbar inválido en config.yml, usando SOLID.");
-            }
-
-            // título inicial
-            Component titleComponent = bossBarMessages.get(bossBarIndex);
-            String title = componentToLegacy(titleComponent);
+            String title = componentToLegacy(bossBarMessages.get(bossBarIndex));
 
             if (bossBar == null) {
                 bossBar = Bukkit.createBossBar(title, color, style);
@@ -185,39 +210,65 @@ public final class WatonesHubActionBar extends JavaPlugin {
                 bossBar.removeAll();
             }
 
-            // IMPORTANT: resetea viewers para que se vuelva a añadir correctamente por mundo
-            bossbarViewers.clear();
+            syncBossbarViewers();
 
-            // progreso y animación
             bossBarProgressEnabled = cfg.getBoolean("bossbar.progress.enabled", true);
             bossBarProgressStep = cfg.getDouble("bossbar.progress.step", 0.01D);
-            if (bossBarProgressStep <= 0) {
+            if (bossBarProgressStep <= 0D) {
                 bossBarProgressStep = 0.01D;
             }
 
             bossBarProgress = cfg.getDouble("bossbar.progress.initial", 1.0D);
-            if (bossBarProgress < 0) bossBarProgress = 0;
-            if (bossBarProgress > 1) bossBarProgress = 1;
+            if (bossBarProgress < 0D) {
+                bossBarProgress = 0D;
+            } else if (bossBarProgress > 1D) {
+                bossBarProgress = 1D;
+            }
 
-            boolean pingPong = cfg.getBoolean("bossbar.progress.pingpong", true);
-            bossBarProgressDirection = pingPong ? -1.0D : -1.0D; // empezamos bajando desde 1.0
+            bossBarProgressInitial = bossBarProgress;
+            bossBarProgressPingPong = cfg.getBoolean("bossbar.progress.pingpong", true);
+            bossBarProgressDirection = -1.0D;
             bossBar.setProgress(bossBarProgress);
-
         } else {
             if (bossBar != null) {
                 bossBar.removeAll();
                 bossBar = null;
             }
+
             bossBarProgressEnabled = false;
+            bossBarProgressPingPong = false;
+            bossBarProgressInitial = 1.0D;
             bossbarViewers.clear();
         }
     }
 
+    private BarColor parseBarColor(String value) {
+        try {
+            return BarColor.valueOf(value.toUpperCase(Locale.ROOT));
+        } catch (Exception ex) {
+            getLogger().warning("Invalid bossbar color in config.yml, using PINK.");
+            return BarColor.PINK;
+        }
+    }
+
+    private BarStyle parseBarStyle(String value) {
+        try {
+            return BarStyle.valueOf(value.toUpperCase(Locale.ROOT));
+        } catch (Exception ex) {
+            getLogger().warning("Invalid bossbar style in config.yml, using SOLID.");
+            return BarStyle.SOLID;
+        }
+    }
+
     private Component parseText(String raw) {
-        if (raw == null) raw = "";
+        if (raw == null) {
+            raw = "";
+        }
+
         if (raw.contains("&")) {
             return LegacyComponentSerializer.legacyAmpersand().deserialize(raw);
         }
+
         return MiniMessage.miniMessage().deserialize(raw);
     }
 
@@ -225,17 +276,99 @@ public final class WatonesHubActionBar extends JavaPlugin {
         return LegacyComponentSerializer.legacySection().serialize(component);
     }
 
-    // ───────────────── Tarea principal ─────────────────
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        if (!bossBarEnabled || bossBar == null) {
+            return;
+        }
 
-    private void startTask() {
-        // Una sola task cada 1 tick.
-        Bukkit.getScheduler().runTaskTimer(this, () -> {
+        Player player = event.getPlayer();
+        UUID id = player.getUniqueId();
+        if (bossbarViewers.remove(id)) {
+            bossBar.removePlayer(player);
+        }
+    }
+
+    @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        if (!pluginEnabled || !bossBarEnabled || bossBar == null) {
+            return;
+        }
+        updateBossbarViewer(event.getPlayer());
+    }
+
+    @EventHandler
+    public void onPlayerChangedWorld(PlayerChangedWorldEvent event) {
+        if (!pluginEnabled || !bossBarEnabled || bossBar == null) {
+            return;
+        }
+        updateBossbarViewer(event.getPlayer());
+    }
+
+    private void syncBossbarViewers() {
+        if (!bossBarEnabled || bossBar == null) {
+            bossbarViewers.clear();
+            return;
+        }
+
+        bossBar.removeAll();
+        bossbarViewers.clear();
+
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (shouldShow(player.getWorld())) {
+                UUID id = player.getUniqueId();
+                bossbarViewers.add(id);
+                bossBar.addPlayer(player);
+            }
+        }
+    }
+
+    private void updateBossbarViewer(Player player) {
+        UUID id = player.getUniqueId();
+        boolean inTarget = shouldShow(player.getWorld());
+
+        if (inTarget) {
+            if (bossbarViewers.add(id)) {
+                bossBar.addPlayer(player);
+            }
+        } else {
+            if (bossbarViewers.remove(id)) {
+                bossBar.removePlayer(player);
+            }
+        }
+    }
+
+    private void applyRuntimeState() {
+        if (pluginEnabled) {
+            ensureTaskRunning();
+        } else {
+            stopTask();
+            if (bossBar != null) {
+                bossBar.removeAll();
+            }
+            bossbarViewers.clear();
+        }
+    }
+
+    private void ensureTaskRunning() {
+        if (tickerTask != null && !tickerTask.isCancelled()) {
+            return;
+        }
+
+        tickerTask = Bukkit.getScheduler().runTaskTimer(this, () -> {
+            if (!pluginEnabled) {
+                return;
+            }
+
+            Collection<? extends Player> players = Bukkit.getOnlinePlayers();
+            if (players.isEmpty()) {
+                return;
+            }
+
             tickCounter++;
 
-            // ¿Toca enviar ActionBar este tick?
             boolean sendActionBarNow = actionBarEnabled && (tickCounter % actionBarInterval == 0);
 
-            // Mensaje actual del ActionBar (si toca enviar)
             Component currentActionBar = null;
             if (sendActionBarNow) {
                 currentActionBar = actionBarMessages.get(actionBarIndex);
@@ -244,57 +377,49 @@ public final class WatonesHubActionBar extends JavaPlugin {
                 }
             }
 
-            // Rotación de mensaje de BossBar
             if (bossBarEnabled && bossBar != null && bossBarMessages.size() > 1
                     && (tickCounter % bossBarRotationInterval == 0)) {
                 bossBarIndex = (bossBarIndex + 1) % bossBarMessages.size();
                 bossBar.setTitle(componentToLegacy(bossBarMessages.get(bossBarIndex)));
             }
 
-            // Animación de progreso de BossBar
             if (bossBarEnabled && bossBar != null && bossBarProgressEnabled) {
                 bossBarProgress += bossBarProgressStep * bossBarProgressDirection;
 
                 if (bossBarProgress >= 1.0D) {
                     bossBarProgress = 1.0D;
-                    bossBarProgressDirection = -1.0D;
+                    bossBarProgressDirection = bossBarProgressPingPong ? -1.0D : 1.0D;
                 } else if (bossBarProgress <= 0.0D) {
-                    bossBarProgress = 0.0D;
-                    bossBarProgressDirection = 1.0D;
+                    if (bossBarProgressPingPong) {
+                        bossBarProgress = 0.0D;
+                        bossBarProgressDirection = 1.0D;
+                    } else {
+                        bossBarProgress = bossBarProgressInitial;
+                        bossBarProgressDirection = -1.0D;
+                    }
                 }
 
                 bossBar.setProgress(bossBarProgress);
             }
 
-            // Recorrido de jugadores UNA sola vez por tick
-            for (Player player : Bukkit.getOnlinePlayers()) {
-                boolean inTarget = shouldShow(player.getWorld());
-
-                // ActionBar solo si toca y si está en mundo objetivo
-                if (sendActionBarNow && inTarget && currentActionBar != null) {
-                    player.sendActionBar(currentActionBar);
-                }
-
-                // BossBar: añadir / remover según mundo (O(1) con set)
-                if (bossBarEnabled && bossBar != null) {
-                    UUID id = player.getUniqueId();
-
-                    if (inTarget) {
-                        if (bossbarViewers.add(id)) {
-                            bossBar.addPlayer(player);
-                        }
-                    } else {
-                        if (bossbarViewers.remove(id)) {
-                            bossBar.removePlayer(player);
-                        }
+            if (sendActionBarNow && currentActionBar != null) {
+                for (Player player : players) {
+                    if (shouldShow(player.getWorld())) {
+                        player.sendActionBar(currentActionBar);
                     }
                 }
             }
+        }, 0L, 1L);
+    }
 
-        }, 0L, 1L); // periodo 1 tick
+    private void stopTask() {
+        if (tickerTask != null) {
+            tickerTask.cancel();
+            tickerTask = null;
+        }
     }
 
     private boolean shouldShow(World world) {
-        return targetWorlds.isEmpty() || targetWorlds.contains(world.getName().toLowerCase());
+        return targetWorlds.isEmpty() || targetWorlds.contains(world.getName().toLowerCase(Locale.ROOT));
     }
 }
