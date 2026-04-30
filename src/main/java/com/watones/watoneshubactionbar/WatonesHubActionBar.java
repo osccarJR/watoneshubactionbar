@@ -1,10 +1,10 @@
 package com.watones.watoneshubactionbar;
 
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.World;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -40,6 +41,9 @@ import java.util.stream.Collectors;
  */
 public final class WatonesHubActionBar extends JavaPlugin implements Listener {
 
+    // Detecta codigos de color legacy (&c, &l, etc.) de forma precisa
+    private static final Pattern LEGACY_CODE = Pattern.compile("&[0-9a-fk-orA-FK-OR]");
+
     private boolean pluginEnabled;
 
     private boolean actionBarEnabled;
@@ -49,6 +53,7 @@ public final class WatonesHubActionBar extends JavaPlugin implements Listener {
 
     private boolean bossBarEnabled;
     private List<Component> bossBarMessages;
+    private List<String>    bossBarTitles;   // pre-serializados para evitar conversion por tick
     private int bossBarIndex = 0;
     private long bossBarRotationInterval;
     private boolean bossBarProgressEnabled;
@@ -94,12 +99,13 @@ public final class WatonesHubActionBar extends JavaPlugin implements Listener {
         }
 
         if (!sender.hasPermission("watoneshubactionbar.reload")) {
-            sender.sendMessage(ChatColor.RED + "No tienes permiso para usar este comando.");
+            sender.sendMessage(Component.text("No tienes permiso para usar este comando.", NamedTextColor.RED));
             return true;
         }
 
         if (args.length == 0) {
-            sender.sendMessage(ChatColor.YELLOW + "Uso: " + ChatColor.WHITE + "/whab <reload|on|off|status>");
+            sender.sendMessage(Component.text("Uso: ", NamedTextColor.YELLOW)
+                    .append(Component.text("/whab <reload|on|off|status>", NamedTextColor.WHITE)));
             return true;
         }
 
@@ -109,36 +115,43 @@ public final class WatonesHubActionBar extends JavaPlugin implements Listener {
                 reloadConfig();
                 reloadSettings();
                 applyRuntimeState();
-                sender.sendMessage(ChatColor.GREEN + "WatonesHubActionBar recargado. Estado: "
-                        + (pluginEnabled ? ChatColor.GREEN + "ON" : ChatColor.RED + "OFF"));
+                sender.sendMessage(Component.text("WatonesHubActionBar recargado. Estado: ", NamedTextColor.GREEN)
+                        .append(pluginEnabled
+                                ? Component.text("ON", NamedTextColor.GREEN)
+                                : Component.text("OFF", NamedTextColor.RED)));
                 return true;
 
             case "on":
                 if (pluginEnabled) {
-                    sender.sendMessage(ChatColor.YELLOW + "WatonesHubActionBar ya esta encendido.");
+                    sender.sendMessage(Component.text("WatonesHubActionBar ya esta encendido.", NamedTextColor.YELLOW));
                     return true;
                 }
                 setEnabledInConfig(true);
-                sender.sendMessage(ChatColor.GREEN + "WatonesHubActionBar encendido.");
+                sender.sendMessage(Component.text("WatonesHubActionBar encendido.", NamedTextColor.GREEN));
                 return true;
 
             case "off":
                 if (!pluginEnabled) {
-                    sender.sendMessage(ChatColor.YELLOW + "WatonesHubActionBar ya esta apagado.");
+                    sender.sendMessage(Component.text("WatonesHubActionBar ya esta apagado.", NamedTextColor.YELLOW));
                     return true;
                 }
                 setEnabledInConfig(false);
-                sender.sendMessage(ChatColor.RED + "WatonesHubActionBar apagado.");
+                sender.sendMessage(Component.text("WatonesHubActionBar apagado.", NamedTextColor.RED));
                 return true;
 
             case "status":
-                sender.sendMessage(ChatColor.GRAY + "Estado: " + (pluginEnabled ? ChatColor.GREEN + "ON" : ChatColor.RED + "OFF")
-                        + ChatColor.GRAY + " | ActionBar: " + (actionBarEnabled ? ChatColor.GREEN + "ON" : ChatColor.RED + "OFF")
-                        + ChatColor.GRAY + " | BossBar: " + (bossBarEnabled ? ChatColor.GREEN + "ON" : ChatColor.RED + "OFF"));
+                sender.sendMessage(
+                        Component.text("Estado: ", NamedTextColor.GRAY)
+                                .append(pluginEnabled ? Component.text("ON", NamedTextColor.GREEN) : Component.text("OFF", NamedTextColor.RED))
+                                .append(Component.text(" | ActionBar: ", NamedTextColor.GRAY))
+                                .append(actionBarEnabled ? Component.text("ON", NamedTextColor.GREEN) : Component.text("OFF", NamedTextColor.RED))
+                                .append(Component.text(" | BossBar: ", NamedTextColor.GRAY))
+                                .append(bossBarEnabled ? Component.text("ON", NamedTextColor.GREEN) : Component.text("OFF", NamedTextColor.RED)));
                 return true;
 
             default:
-                sender.sendMessage(ChatColor.YELLOW + "Uso: " + ChatColor.WHITE + "/whab <reload|on|off|status>");
+                sender.sendMessage(Component.text("Uso: ", NamedTextColor.YELLOW)
+                        .append(Component.text("/whab <reload|on|off|status>", NamedTextColor.WHITE)));
                 return true;
         }
     }
@@ -146,7 +159,7 @@ public final class WatonesHubActionBar extends JavaPlugin implements Listener {
     private void setEnabledInConfig(boolean enabled) {
         getConfig().set("plugin.enabled", enabled);
         saveConfig();
-        reloadConfig();
+        // no hace falta reloadConfig(): el valor ya esta en memoria
         reloadSettings();
         applyRuntimeState();
     }
@@ -159,7 +172,6 @@ public final class WatonesHubActionBar extends JavaPlugin implements Listener {
         actionBarIndex = 0;
         bossBarIndex = 0;
         tickCounter = 0L;
-        bossBarProgressDirection = 1.0D;
 
         actionBarEnabled = cfg.getBoolean("actionbar.enabled", true);
 
@@ -191,6 +203,11 @@ public final class WatonesHubActionBar extends JavaPlugin implements Listener {
                 bossBarMessages = bbList.stream().map(this::parseText).collect(Collectors.toList());
             }
 
+            // Pre-serializar titulos para no convertir Component->String en cada tick
+            bossBarTitles = bossBarMessages.stream()
+                    .map(this::componentToLegacy)
+                    .collect(Collectors.toList());
+
             bossBarRotationInterval = cfg.getLong("bossbar.rotation-interval", 200L);
             if (bossBarRotationInterval < 20L) {
                 bossBarRotationInterval = 20L;
@@ -199,12 +216,10 @@ public final class WatonesHubActionBar extends JavaPlugin implements Listener {
             BarColor color = parseBarColor(cfg.getString("bossbar.color", "PINK"));
             BarStyle style = parseBarStyle(cfg.getString("bossbar.style", "SOLID"));
 
-            String title = componentToLegacy(bossBarMessages.get(bossBarIndex));
-
             if (bossBar == null) {
-                bossBar = Bukkit.createBossBar(title, color, style);
+                bossBar = Bukkit.createBossBar(bossBarTitles.get(bossBarIndex), color, style);
             } else {
-                bossBar.setTitle(title);
+                bossBar.setTitle(bossBarTitles.get(bossBarIndex));
                 bossBar.setColor(color);
                 bossBar.setStyle(style);
                 bossBar.removeAll();
@@ -264,11 +279,10 @@ public final class WatonesHubActionBar extends JavaPlugin implements Listener {
         if (raw == null) {
             raw = "";
         }
-
-        if (raw.contains("&")) {
+        // Busca un codigo de color/formato legacy real (&c, &l, &r...) en vez de cualquier &
+        if (LEGACY_CODE.matcher(raw).find()) {
             return LegacyComponentSerializer.legacyAmpersand().deserialize(raw);
         }
-
         return MiniMessage.miniMessage().deserialize(raw);
     }
 
@@ -380,7 +394,7 @@ public final class WatonesHubActionBar extends JavaPlugin implements Listener {
             if (bossBarEnabled && bossBar != null && bossBarMessages.size() > 1
                     && (tickCounter % bossBarRotationInterval == 0)) {
                 bossBarIndex = (bossBarIndex + 1) % bossBarMessages.size();
-                bossBar.setTitle(componentToLegacy(bossBarMessages.get(bossBarIndex)));
+                bossBar.setTitle(bossBarTitles.get(bossBarIndex));
             }
 
             if (bossBarEnabled && bossBar != null && bossBarProgressEnabled) {
